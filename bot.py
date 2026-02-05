@@ -1,86 +1,69 @@
 import tweepy
-import random
 import time
+import random
 import os
+import threading
+from flask import Flask
+from dotenv import load_dotenv
 
-# ---------- CONFIG ----------
-PHRASES_FILE = "pauljac.txt"
-LAST_ID_FILE = "last_replied_id.txt"
-POST_INTERVAL = 60 * 60  # 1 hour
-MENTION_CHECK_INTERVAL = 5 * 60  # 5 minutes
-# ----------------------------
+load_dotenv()
 
-def load_phrases():
-    with open(PHRASES_FILE, "r", encoding="utf-8") as f:
-        return [line.strip() for line in f if line.strip()]
-
-phrases = load_phrases()
-
+# --- Twitter API Setup ---
 client = tweepy.Client(
-    bearer_token=os.environ["BEARER_TOKEN"],
-    consumer_key=os.environ["X_API_KEY"],
-    consumer_secret=os.environ["X_API_SECRET"],
-    access_token=os.environ["X_ACCESS_TOKEN"],
-    access_token_secret=os.environ["X_ACCESS_SECRET"],
-    wait_on_rate_limit=True
+    consumer_key=os.getenv("API_KEY"),
+    consumer_secret=os.getenv("API_SECRET"),
+    access_token=os.getenv("ACCESS_TOKEN"),
+    access_token_secret=os.getenv("ACCESS_TOKEN_SECRET")
 )
 
-BOT_USER_ID = os.environ["BOT_USER_ID"]
+# numerical id 
+BOT_USER_ID = os.getenv("2019338817635831808")
 
-def random_phrase():
-    return random.choice(phrases)
+#flask server or some bullshit (render requirement)
+app = Flask(__name__)
 
-def get_last_id():
-    if os.path.exists(LAST_ID_FILE):
-        return int(open(LAST_ID_FILE).read().strip())
-    return None
+@app.route('/')
+def home():
+    return "Bot is running!"
 
-def save_last_id(tweet_id):
-    with open(LAST_ID_FILE, "w") as f:
-        f.write(str(tweet_id))
+# --- Bot Logic ---
+def get_random_phrase():
+    with open("pauljac.txt", "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    return random.choice(lines).strip()
 
-def post_random_tweet():
-    client.create_tweet(text=random_phrase())
-    print("Posted tweet")
+def bot_loop():
+    last_mention_id = 1  
+    
+    while True:
+        try:
+            # 1. Post hourly phrase
+            phrase = get_random_phrase()
+            client.create_tweet(text=phrase)
+            print(f"Posted: {phrase}")
 
-def reply_to_mentions():
-    since_id = get_last_id()
+            # 2. Check and Reply to Mentions
+            # Note: Free tier may limit how often you can call this
+            mentions = client.get_users_mentions(id=BOT_USER_ID, since_id=last_mention_id)
+            
+            if mentions.data:
+                for tweet in mentions.data:
+                    client.create_tweet(
+                        text=f"{get_random_phrase()}",
+                        in_reply_to_tweet_id=tweet.id
+                    )
+                    last_mention_id = tweet.id
+                    print(f"Replied to tweet: {tweet.id}")
 
-    mentions = client.get_users_mentions(
-        id=BOT_USER_ID,
-        since_id=since_id,
-        max_results=10
-    )
+        except Exception as e:
+            print(f"Error: {e}")
 
-    if not mentions.data:
-        return
-
-    for tweet in reversed(mentions.data):
-        # skip self-replies just in case
-        if str(tweet.author_id) == BOT_USER_ID:
-            continue
-
-        client.create_tweet(
-            text=random_phrase(),
-            in_reply_to_tweet_id=tweet.id
-        )
-        print(f"Replied to {tweet.id}")
-        save_last_id(tweet.id)
-        time.sleep(random.randint(10, 30))  # anti-spam delay
+        # Sleep for 60 minutes
+        time.sleep(3600)
 
 if __name__ == "__main__":
-    last_post = 0
-    last_check = 0
-
-    while True:
-        now = time.time()
-
-        if now - last_post > POST_INTERVAL:
-            post_random_tweet()
-            last_post = now
-
-        if now - last_check > MENTION_CHECK_INTERVAL:
-            reply_to_mentions()
-            last_check = now
-
-        time.sleep(10)
+    # Run the bot loop in a separate thread
+    threading.Thread(target=bot_loop, daemon=True).start()
+    # Run Flask on the port Render provides
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
