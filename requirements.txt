@@ -1,2 +1,4 @@
 tweepy
+flask
 python-dotenv
+gunicorn
