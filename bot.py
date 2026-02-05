@@ -5,8 +5,7 @@ import os
 import threading
 from flask import Flask
 
-# --- 1. CONFIGURATION ---
-# These are pulled from Render's Environment Variables
+# --- CONFIGURATION ---
 API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
@@ -14,7 +13,6 @@ ACCESS_TOKEN_SECRET = os.getenv("ACCESS_TOKEN_SECRET")
 BEARER_TOKEN = os.getenv("BEARER_TOKEN")
 BOT_USER_ID = os.getenv("BOT_USER_ID")
 
-# Initialize Tweepy Client (v2 API)
 client = tweepy.Client(
     bearer_token=BEARER_TOKEN,
     consumer_key=API_KEY,
@@ -23,55 +21,60 @@ client = tweepy.Client(
     access_token_secret=ACCESS_TOKEN_SECRET
 )
 
-# --- 2. WEB SERVER (To keep Render alive) ---
 app = Flask(__name__)
 
 @app.route('/')
 def health_check():
-    return "Bot is alive!", 200
+    return "Bot is alive and watching pauljac.txt!", 200
 
-# --- 3. BOT LOGIC ---
+# --- THE BOT BRAIN ---
 def get_random_phrase():
     try:
+        # UPDATED FILENAME HERE
         with open("pauljac.txt", "r", encoding="utf-8") as f:
             phrases = [line.strip() for line in f if line.strip()]
         return random.choice(phrases)
     except Exception as e:
-        print(f"Error reading phrases: {e}")
+        print(f"❌ File Error (pauljac.txt): {e}")
         return "Thinking of something clever..."
 
 def run_bot():
-    print("Bot loop started...")
-    last_responded_id = None
+    print("🚀 BOT LOOP INITIALIZED")
+    last_post_time = 0
+    last_mention_id = 1 
     
     while True:
-        try:
-            # POST A RANDOM PHRASE
-            new_tweet = get_random_phrase()
-            client.create_tweet(text=new_tweet)
-            print(f"✅ Posted: {new_tweet}")
+        now = time.time()
 
-            # CHECK MENTIONS & REPLY
-            # The Free Tier allows checking mentions roughly every 15 mins.
-            # We check right after we post.
-            mentions = client.get_users_mentions(id=BOT_USER_ID, since_id=last_responded_id)
-            
+        # 1. Post every 90 mins (5400s)
+        if now - last_post_time > 5400:
+            try:
+                tweet = get_random_phrase()
+                client.create_tweet(text=tweet)
+                print(f"✅ Posted: {tweet}")
+                last_post_time = now
+            except Exception as e:
+                print(f"❌ Post Error: {e}")
+
+        # 2. Check for replies every 2 mins
+        try:
+            mentions = client.get_users_mentions(id=BOT_USER_ID, since_id=last_mention_id)
             if mentions.data:
                 for tweet in mentions.data:
-                    reply_text = f"@{tweet.author_id} {get_random_phrase()}"
-                    client.create_tweet(text=reply_text, in_reply_to_tweet_id=tweet.id)
-                    last_responded_id = tweet.id
+                    reply = f"@{tweet.author_id} {get_random_phrase()}"
+                    client.create_tweet(text=reply, in_reply_to_tweet_id=tweet.id)
+                    last_mention_id = tweet.id
                     print(f"💬 Replied to tweet {tweet.id}")
-
         except Exception as e:
-            print(f"❌ Error in bot loop: {e}")
+            if "429" not in str(e): 
+                print(f"⚠️ Mention Error: {e}")
 
-        # Sleep for 90 minutes (5400 seconds) to stay under the 500 post/mo limit
-        time.sleep(5400)
+        time.sleep(120)
+
+# --- STARTUP ---
+print("Starting background thread...")
+threading.Thread(target=run_bot, daemon=True).start()
 
 if __name__ == "__main__":
-    # Start the bot in the background
-    threading.Thread(target=run_bot, daemon=True).start()
-    # Start the web server
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
