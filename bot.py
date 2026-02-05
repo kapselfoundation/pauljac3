@@ -33,7 +33,7 @@ def health_check():
 # --- 3. BOT LOGIC ---
 def get_random_phrase():
     try:
-        with open("phrases.txt", "r", encoding="utf-8") as f:
+        with open("pauljac.txt", "r", encoding="utf-8") as f:
             phrases = [line.strip() for line in f if line.strip()]
         return random.choice(phrases)
     except Exception as e:
